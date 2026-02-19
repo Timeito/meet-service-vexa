@@ -52,6 +52,7 @@ COPY core/build-browser-utils.js ./core/
 
 # Install TypeScript dependencies
 WORKDIR /app/vexa-bot/core
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm install
 RUN npm install -g typescript
 
