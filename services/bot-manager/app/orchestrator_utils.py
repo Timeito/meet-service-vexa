@@ -233,7 +233,7 @@ async def start_bot_container(
         },
         "botManagerCallbackUrl": f"http://bot-manager:8080/bots/internal/callback/exited",
         "recordingEnabled": user_recording_config.get("enabled", os.getenv("RECORDING_ENABLED", "false").lower() == "true"),
-        "transcribeEnabled": True if transcribe_enabled is None else bool(transcribe_enabled),
+        "transcribeEnabled": (os.getenv("TRANSCRIBE_ENABLED", "true").lower() == "true") if transcribe_enabled is None else bool(transcribe_enabled),
         "captureModes": user_recording_config.get("capture_modes", os.getenv("CAPTURE_MODES", "audio").split(",")),
         "recordingUploadUrl": f"http://bot-manager:8080/internal/recordings/upload"
     }
@@ -253,10 +253,17 @@ async def start_bot_container(
     # This is set in docker-compose.yml to ws://whisperlive.internal/ws to go through Traefik.
     whisper_live_url_for_bot = os.getenv('WHISPER_LIVE_URL')
 
+    # Determine if transcription is globally disabled
+    transcribe_globally_disabled = os.getenv('TRANSCRIBE_ENABLED', 'true').lower() == 'false'
+
     if not whisper_live_url_for_bot:
-        # This should ideally not happen if docker-compose.yml is correctly configured.
-        logger.error("CRITICAL: WHISPER_LIVE_URL is not set in bot-manager's environment. Falling back to default, but this should be fixed in docker-compose.yml for bot-manager service.")
-        whisper_live_url_for_bot = 'ws://whisperlive.internal/ws' # Fallback, but log an error.
+        if transcribe_globally_disabled:
+            # Transcription is intentionally disabled (recording-only mode); no WhisperLive needed
+            logger.info("WHISPER_LIVE_URL is not set, but transcription is disabled (recording-only mode). This is expected.")
+            whisper_live_url_for_bot = ''  # Empty string – bot will not connect to WhisperLive
+        else:
+            logger.error("CRITICAL: WHISPER_LIVE_URL is not set in bot-manager's environment. Falling back to default, but this should be fixed in docker-compose.yml for bot-manager service.")
+            whisper_live_url_for_bot = 'ws://whisperlive.internal/ws' # Fallback, but log an error.
 
     logger.info(f"Passing WHISPER_LIVE_URL to bot: {whisper_live_url_for_bot}")
 

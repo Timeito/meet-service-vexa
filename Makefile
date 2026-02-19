@@ -35,7 +35,7 @@ get_compose_files = $(shell REMOTE_DB=$$(grep -E '^[[:space:]]*REMOTE_DB=' .env 
 
 # Ensure transcription-service/.env exists with API_TOKEN
 setup-transcription-service-env:
-	@if [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "none" ]; then \
 		exit 0; \
 	fi; \
 	if [ ! -f services/transcription-service/.env ]; then \
@@ -80,8 +80,11 @@ define create_env_file
 	elif [ "$$TRANSCRIPTION_TYPE" = "remote" ]; then \
 		ENV_FILE=env-example.remote; \
 		URL=https://transcription-service.dev.vexa.ai/v1/audio/transcriptions; \
+	elif [ "$$TRANSCRIPTION_TYPE" = "none" ]; then \
+		ENV_FILE=env-example.none; \
+		URL=; \
 	else \
-		echo "Error: Invalid TRANSCRIPTION_TYPE=$$TRANSCRIPTION_TYPE. Must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: Invalid TRANSCRIPTION_TYPE=$$TRANSCRIPTION_TYPE. Must be 'cpu', 'gpu', 'remote', or 'none'"; \
 		exit 1; \
 	fi; \
 	if [ ! -f $$ENV_FILE ]; then \
@@ -134,7 +137,7 @@ define create_env_file
 		fi; \
 	fi; \
 	cp $$ENV_FILE .env; \
-	if [ "$$TRANSCRIPTION_TYPE" != "remote" ]; then \
+	if [ "$$TRANSCRIPTION_TYPE" != "remote" ] && [ "$$TRANSCRIPTION_TYPE" != "none" ]; then \
 		TRANSCRIPTION_API_TOKEN=$$(grep -E '^[[:space:]]*API_TOKEN=' services/transcription-service/.env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' || echo ""); \
 		if [ -n "$$TRANSCRIPTION_API_TOKEN" ] && [ "$$TRANSCRIPTION_TYPE" != "remote" ]; then \
 			if grep -q "^REMOTE_TRANSCRIBER_API_KEY=" .env 2>/dev/null; then \
@@ -158,6 +161,23 @@ define create_env_file
 		echo "  make force-env TRANSCRIPTION=gpu   # For GPU-based local transcription"; \
 		echo "============================================================================"; \
 		echo ""; \
+	fi; \
+	if [ "$$TRANSCRIPTION_TYPE" = "none" ]; then \
+		echo ""; \
+		echo "============================================================================"; \
+		echo "Recording-Only Mode (No Transcription)"; \
+		echo "============================================================================"; \
+		echo "Transcription is DISABLED. Bots will only record audio and upload to storage."; \
+		echo "No GPU, WhisperLive, or transcription-service is required."; \
+		echo ""; \
+		echo "Recording will be saved to: $$(grep STORAGE_BACKEND .env 2>/dev/null | cut -d= -f2 || echo 'minio')"; \
+		echo ""; \
+		echo "To enable transcription, use:"; \
+		echo "  make force-env TRANSCRIPTION=cpu      # CPU-based local transcription"; \
+		echo "  make force-env TRANSCRIPTION=gpu      # GPU-based local transcription"; \
+		echo "  make force-env TRANSCRIPTION=remote   # Remote transcription service"; \
+		echo "============================================================================"; \
+		echo ""; \
 	fi
 endef
 
@@ -166,10 +186,10 @@ env: setup-transcription-service-env
 ifndef TRANSCRIPTION
 	$(eval TRANSCRIPTION := remote)
 endif
-	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "none" ]; then \
 		$(call create_env_file,$(TRANSCRIPTION),); \
 	else \
-		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', 'remote', or 'none'"; \
 		exit 1; \
 	fi
 
@@ -178,10 +198,10 @@ force-env: setup-transcription-service-env
 ifndef TRANSCRIPTION
 	$(eval TRANSCRIPTION := remote)
 endif
-	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "cpu" ] || [ "$(TRANSCRIPTION)" = "gpu" ] || [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "none" ]; then \
 		$(call create_env_file,$(TRANSCRIPTION),force); \
 	else \
-		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', or 'remote'"; \
+		echo "Error: TRANSCRIPTION must be 'cpu', 'gpu', 'remote', or 'none'"; \
 		exit 1; \
 	fi
 
@@ -200,7 +220,7 @@ build-bot-image: check_docker
 
 # Build transcription-service based on TRANSCRIPTION
 build-transcription-service: check_docker
-	@if [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "none" ]; then \
 		exit 0; \
 	elif [ "$(TRANSCRIPTION)" = "cpu" ]; then \
 		cd services/transcription-service && docker compose -f docker-compose.cpu.yml build; \
@@ -215,11 +235,16 @@ build: check_docker build-bot-image build-transcription-service
 	if [ "$$REMOTE_DB" != "true" ]; then \
 		COMPOSE_FILES="$$COMPOSE_FILES -f docker-compose.local-db.yml"; \
 	fi; \
-	docker compose $$COMPOSE_FILES --profile remote build
+	TRANSCRIPTION_MODE=$$(grep -E '^[[:space:]]*TRANSCRIBE_ENABLED=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' | tr '[:upper:]' '[:lower:]' || echo "true"); \
+	if [ "$$TRANSCRIPTION_MODE" = "false" ]; then \
+		docker compose $$COMPOSE_FILES build; \
+	else \
+		docker compose $$COMPOSE_FILES --profile remote build; \
+	fi
 
 # Start transcription-service based on TRANSCRIPTION
 up-transcription-service: check_docker
-	@if [ "$(TRANSCRIPTION)" = "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" = "remote" ] || [ "$(TRANSCRIPTION)" = "none" ]; then \
 		exit 0; \
 	elif [ "$(TRANSCRIPTION)" = "cpu" ]; then \
 		cd services/transcription-service && docker compose -f docker-compose.cpu.yml up -d; \
@@ -234,7 +259,7 @@ down-transcription-service: check_docker
 
 # Start services in detached mode
 up: check_docker
-	@if [ "$(TRANSCRIPTION)" != "remote" ]; then \
+	@if [ "$(TRANSCRIPTION)" != "remote" ] && [ "$(TRANSCRIPTION)" != "none" ]; then \
 		$(MAKE) up-transcription-service; \
 	fi
 	@REMOTE_DB=$$(grep -E '^[[:space:]]*REMOTE_DB=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' | tr '[:upper:]' '[:lower:]' || echo "false"); \
@@ -246,7 +271,12 @@ up: check_docker
 		echo "Creating vexa-network..."; \
 		docker network create vexa-network || true; \
 	fi; \
-	docker compose $$COMPOSE_FILES --profile remote up -d; \
+	TRANSCRIPTION_MODE=$$(grep -E '^[[:space:]]*TRANSCRIBE_ENABLED=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' | tr '[:upper:]' '[:lower:]' || echo "true"); \
+	if [ "$$TRANSCRIPTION_MODE" = "false" ]; then \
+		docker compose $$COMPOSE_FILES up -d; \
+	else \
+		docker compose $$COMPOSE_FILES --profile remote up -d; \
+	fi; \
 	sleep 3; \
 	if [ "$$REMOTE_DB" = "true" ]; then \
 		if docker compose $$COMPOSE_FILES ps -q postgres 2>/dev/null | grep -q .; then \

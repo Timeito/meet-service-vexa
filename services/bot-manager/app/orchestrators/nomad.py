@@ -95,7 +95,7 @@ async def start_bot_container(
         "connection_id": connection_id,
         "language": language or "",
         "task": task or "",
-        "transcribe_enabled": str(True if transcribe_enabled is None else bool(transcribe_enabled)).lower(),
+        "transcribe_enabled": str((os.getenv("TRANSCRIBE_ENABLED", "true").lower() == "true") if transcribe_enabled is None else bool(transcribe_enabled)).lower(),
         "recording_enabled": str(recording_enabled).lower() if recording_enabled is not None else "",
         "transcription_tier": transcription_tier or "realtime",
         "zoom_obf_token": (zoom_obf_token or "") if platform == "zoom" else "",

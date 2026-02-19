@@ -1,0 +1,88 @@
+# ============================================================================
+# Vexa Configuration - Recording-Only Mode (No Transcription)
+# ============================================================================
+# This configuration disables all transcription processing.
+# The bot will join meetings, record audio, and upload recordings to S3/MinIO,
+# but will NOT perform any speech-to-text transcription.
+#
+# No GPU required. No WhisperLive or transcription-service needed.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Authentication & Security
+# ----------------------------------------------------------------------------
+ADMIN_API_TOKEN=token
+# Change this to a secure token in production!
+
+# ----------------------------------------------------------------------------
+# Transcription Control
+# ----------------------------------------------------------------------------
+# TRANSCRIBE_ENABLED=false disables all transcription globally.
+# Bots will only record audio and upload to storage.
+TRANSCRIBE_ENABLED=false
+
+# Recording is enabled by default in this mode
+RECORDING_ENABLED=true
+
+# ----------------------------------------------------------------------------
+# WhisperLive Configuration (disabled in recording-only mode)
+# ----------------------------------------------------------------------------
+DEVICE_TYPE=remote
+# WhisperLive URL is intentionally empty in recording-only mode
+WHISPER_LIVE_URL=
+# These are included for docker-compose compatibility (not used):
+WHISPER_MODEL_SIZE=
+WL_MAX_CLIENTS=
+
+# ----------------------------------------------------------------------------
+# Bot Configuration
+# ----------------------------------------------------------------------------
+BOT_IMAGE_NAME=vexa-bot:dev
+# Docker image name for vexa-bot containers
+
+# Zoom Meeting SDK Credentials (Optional - for Zoom bot support)
+# ZOOM_CLIENT_ID=
+# ZOOM_CLIENT_SECRET=
+
+# Voice Agent / TTS Configuration (Optional)
+# OPENAI_API_KEY=
+
+# ----------------------------------------------------------------------------
+# Exposed Host Ports
+# ----------------------------------------------------------------------------
+API_GATEWAY_HOST_PORT=8056
+ADMIN_API_HOST_PORT=8057
+TRANSCRIPTION_COLLECTOR_HOST_PORT=8123
+POSTGRES_HOST_PORT=5438
+
+# ----------------------------------------------------------------------------
+# Database Configuration
+# ----------------------------------------------------------------------------
+# Set REMOTE_DB=true to use external PostgreSQL instead of local Docker postgres
+REMOTE_DB=false
+
+# Remote Database Credentials (only used when REMOTE_DB=true)
+# DB_HOST=your-remote-db-host
+# DB_PORT=5432
+# DB_NAME=your-db-name
+# DB_USER=your-db-user
+# DB_PASSWORD=your-db-password
+
+# ----------------------------------------------------------------------------
+# Recording Storage Backend
+# ----------------------------------------------------------------------------
+# - minio: default object storage (recommended)
+# - local: filesystem backend for simple local setup
+STORAGE_BACKEND=minio
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=vexa-access-key
+MINIO_SECRET_KEY=vexa-secret-key
+MINIO_BUCKET=vexa-recordings
+MINIO_SECURE=false
+
+# Local backend options (used when STORAGE_BACKEND=local)
+LOCAL_STORAGE_DIR=/data/recordings
+LOCAL_STORAGE_FSYNC=true
+# Docker Compose source for /data/recordings.
+# Default uses named volume "recordings-data"; set to a host path for easier inspection, e.g. ./data/recordings
+# LOCAL_STORAGE_VOLUME_SOURCE=recordings-data

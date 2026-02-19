@@ -227,7 +227,7 @@ async def start_bot_container(
         "connectionId": connection_id,
         "language": language,
         "task": task or "transcribe",
-        "transcribeEnabled": True if transcribe_enabled is None else bool(transcribe_enabled),
+        "transcribeEnabled": (os.getenv("TRANSCRIBE_ENABLED", "true").lower() == "true") if transcribe_enabled is None else bool(transcribe_enabled),
         "transcriptionTier": transcription_tier or "realtime",
         "obfToken": zoom_obf_token if platform == "zoom" else None,
         "redisUrl": REDIS_URL,
