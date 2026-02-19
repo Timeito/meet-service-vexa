@@ -1,0 +1,371 @@
+---
+title: "Recording-Only Mode"
+description: "Run Vexa without transcription — record meetings and upload to S3/MinIO without needing a GPU."
+---
+
+Run Vexa as a **recording-only** service — no transcription, no GPU, no WhisperLive. Bots join meetings, record audio, and upload artifacts to S3/MinIO storage. Perfect for servers without a GPU or when you only need meeting recordings.
+
+---
+
+## Overview
+
+| Feature | Recording-Only | Normal (default) |
+|---|---|---|
+| Bot joins meetings | ✅ | ✅ |
+| Audio recording | ✅ | ✅ |
+| Upload to S3/MinIO | ✅ | ✅ |
+| Real-time transcription | ❌ | ✅ |
+| WhisperLive required | ❌ | ✅ |
+| GPU required | ❌ | Depends on mode |
+
+**Key points:**
+
+- No GPU or transcription service is needed.
+- Recordings are uploaded to S3/MinIO (or local filesystem) as usual.
+- The API still works — you can send bots to meetings, manage recordings, etc.
+- Per-meeting override is supported: even in recording-only mode, you can enable transcription for individual meetings via the API (if you later add a transcription backend).
+
+---
+
+## Quick Start
+
+### On an existing Vexa installation
+
+Switch to recording-only mode by recreating the environment:
+
+```bash
+cd vexa
+make force-env TRANSCRIPTION=none
+make all TRANSCRIPTION=none
+```
+
+### On a fresh server (from scratch)
+
+```bash
+# 1. Install Docker (Ubuntu/Debian)
+sudo apt update && sudo apt install -y \
+  python3 python3-pip python-is-python3 python3-venv \
+  make git curl jq ca-certificates gnupg
+
+sudo apt remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc || true
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt update && sudo apt install -y \
+  docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+
+# 2. Clone and deploy
+git clone https://github.com/Vexa-ai/vexa.git && cd vexa
+make all TRANSCRIPTION=none
+```
+
+Or use the automated setup script:
+
+```bash
+git clone https://github.com/Vexa-ai/vexa.git && cd vexa
+sudo ./fresh_setup.sh --cpu        # Installs Docker & prerequisites
+make all TRANSCRIPTION=none        # Deploy in recording-only mode
+```
+
+<Note>No `--gpu` flag needed. Recording-only mode doesn't use the GPU.</Note>
+
+---
+
+## How It Works
+
+### What `make all TRANSCRIPTION=none` does
+
+1. **Creates `.env`** from `env-example.none` template — sets `TRANSCRIBE_ENABLED=false`, `RECORDING_ENABLED=true`, and leaves `WHISPER_LIVE_URL` empty.
+2. **Skips building** WhisperLive / transcription-service images entirely.
+3. **Skips starting** any transcription containers (no `gpu`, `cpu`, or `remote` profile).
+4. **Starts core services only:** bot-manager, api-gateway, admin-api, transcription-collector, Redis, MinIO, PostgreSQL.
+5. **Runs migrations** and basic health checks.
+
+### What happens when a bot joins a meeting
+
+1. Bot joins the meeting (Google Meet / Teams / Zoom).
+2. Audio is captured and recorded.
+3. Recording artifacts are uploaded to the configured storage backend (MinIO by default).
+4. **No connection to WhisperLive** is made — transcription is skipped entirely.
+5. The meeting appears in the API with recording data but no transcript segments.
+
+---
+
+## Configuration
+
+### Environment Variables
+
+The key variables are set automatically by `make all TRANSCRIPTION=none` via the `env-example.none` template:
+
+| Variable | Value | Description |
+|---|---|---|
+| `TRANSCRIBE_ENABLED` | `false` | Globally disables transcription for all bots |
+| `RECORDING_ENABLED` | `true` | Ensures recordings are captured |
+| `WHISPER_LIVE_URL` | *(empty)* | No transcription server to connect to |
+| `STORAGE_BACKEND` | `minio` | Where recordings are stored (`minio`, `s3`, or `local`) |
+
+### Storage Configuration
+
+Recording-only mode uses the same storage backends as normal mode. Configure in `.env`:
+
+<Tabs>
+  <Tab title="MinIO (default)">
+    ```env
+    STORAGE_BACKEND=minio
+    MINIO_ENDPOINT=minio:9000
+    MINIO_ACCESS_KEY=vexa-access-key
+    MINIO_SECRET_KEY=vexa-secret-key
+    MINIO_BUCKET=vexa-recordings
+    MINIO_SECURE=false
+    ```
+  </Tab>
+  <Tab title="Cloud S3">
+    ```env
+    STORAGE_BACKEND=s3
+    AWS_ACCESS_KEY_ID=your-key
+    AWS_SECRET_ACCESS_KEY=your-secret
+    AWS_REGION=us-east-1
+    S3_BUCKET=your-bucket
+    ```
+  </Tab>
+  <Tab title="Local filesystem">
+    ```env
+    STORAGE_BACKEND=local
+    LOCAL_STORAGE_DIR=/data/recordings
+    LOCAL_STORAGE_FSYNC=true
+    ```
+  </Tab>
+</Tabs>
+
+See [Recording & Storage](recording-storage) for full details.
+
+---
+
+## API Usage
+
+### Send a recording-only bot
+
+In recording-only mode, all bots skip transcription by default. Just send a normal bot request:
+
+```bash
+export API_BASE="http://localhost:8056"
+export API_KEY="YOUR_USER_API_TOKEN"
+
+# Google Meet
+curl -X POST "$API_BASE/bots" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{
+    "platform": "google_meet",
+    "native_meeting_id": "abc-defg-hij",
+    "recording_enabled": true
+  }'
+```
+
+### Per-meeting override
+
+Even in recording-only mode, you can enable transcription for a specific meeting by passing `transcribe_enabled: true` in the API request. This requires a WhisperLive backend to be reachable:
+
+```bash
+curl -X POST "$API_BASE/bots" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{
+    "platform": "google_meet",
+    "native_meeting_id": "abc-defg-hij",
+    "recording_enabled": true,
+    "transcribe_enabled": true
+  }'
+```
+
+<Warning>Per-meeting transcription override will fail if no `WHISPER_LIVE_URL` is configured or reachable.</Warning>
+
+---
+
+## Switching Between Modes
+
+### From recording-only → normal (with transcription)
+
+```bash
+make force-env TRANSCRIPTION=remote   # or cpu / gpu
+make all TRANSCRIPTION=remote
+```
+
+### From normal → recording-only
+
+```bash
+make force-env TRANSCRIPTION=none
+make all TRANSCRIPTION=none
+```
+
+### Available TRANSCRIPTION modes
+
+| Mode | Description | GPU Required |
+|---|---|---|
+| `remote` | External WhisperLive service (default) | ❌ |
+| `cpu` | Local WhisperLive on CPU (slow, tiny model) | ❌ |
+| `gpu` | Local WhisperLive on GPU (fast, large models) | ✅ |
+| `none` | **Recording-only — no transcription** | ❌ |
+
+---
+
+## Fresh Server Setup (Complete Guide)
+
+Step-by-step guide to deploy Vexa in recording-only mode on a fresh Ubuntu/Debian server.
+
+### Prerequisites
+
+- Ubuntu 20.04+ or Debian 11+ (other Linux distros work with minor adjustments)
+- At least 4 GB RAM, 2 vCPUs
+- No GPU required
+- Open ports: `8056` (API), `8057` (Admin API)
+
+### Step 1: System packages
+
+```bash
+sudo apt update && sudo apt install -y \
+  python3 python3-pip python-is-python3 python3-venv \
+  make git curl jq ca-certificates gnupg
+```
+
+### Step 2: Install Docker
+
+```bash
+# Remove old versions
+sudo apt remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc || true
+
+# Add Docker GPG key and repository
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+  sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install Docker Engine + Compose
+sudo apt update && sudo apt install -y \
+  docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo systemctl enable --now docker
+```
+
+### Step 3: Clone Vexa
+
+```bash
+git clone https://github.com/Vexa-ai/vexa.git /root/vexa
+cd /root/vexa
+```
+
+### Step 4: Deploy
+
+```bash
+make all TRANSCRIPTION=none
+```
+
+This builds all images, creates the `.env` file, starts services, runs migrations, and verifies the deployment.
+
+### Step 5: Create a user and API token
+
+```bash
+export API_BASE="http://localhost:8056"
+export ADMIN_TOKEN="token"   # Default from env-example.none — change in production!
+
+# Create a user
+curl -X POST "$API_BASE/admin/users" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-API-Key: $ADMIN_TOKEN" \
+  -d '{"email": "user@example.com", "name": "User", "max_concurrent_bots": 5}'
+
+# Generate API token (save it!)
+curl -X POST "$API_BASE/admin/users/1/tokens" \
+  -H "X-Admin-API-Key: $ADMIN_TOKEN"
+```
+
+### Step 6: Send a bot to a meeting
+
+```bash
+export API_KEY="YOUR_TOKEN_FROM_STEP_5"
+
+curl -X POST "$API_BASE/bots" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{
+    "platform": "google_meet",
+    "native_meeting_id": "abc-defg-hij",
+    "recording_enabled": true
+  }'
+```
+
+### Step 7: Verify
+
+```bash
+# Check running containers
+docker compose ps
+
+# Check API health
+curl -s "$API_BASE/health" | jq .
+
+# List meetings
+curl -s "$API_BASE/meetings" \
+  -H "X-API-Key: $API_KEY" | jq .
+```
+
+---
+
+## Troubleshooting
+
+### Bot joins but no recording appears
+
+- Check that `RECORDING_ENABLED=true` is set in `.env`.
+- Check MinIO is running: `docker compose ps minio`.
+- Check bot-manager logs: `docker compose logs bot-manager --tail=50`.
+
+### "WHISPER_LIVE_URL not set" warning in logs
+
+This is **expected** in recording-only mode. The bot-manager logs an info message that transcription is disabled — this is not an error.
+
+### Switching modes doesn't take effect
+
+Use `make force-env` to overwrite the existing `.env`:
+
+```bash
+make force-env TRANSCRIPTION=none
+make all TRANSCRIPTION=none
+```
+
+### Container build fails
+
+Ensure Docker Compose v2 is installed:
+
+```bash
+docker compose version   # Should show v2.x
+```
+
+---
+
+## Architecture (Recording-Only)
+
+```
+┌─────────────┐     ┌──────────────┐     ┌───────────┐
+│  API Client  │────▶│  api-gateway │────▶│bot-manager│
+└─────────────┘     └──────────────┘     └─────┬─────┘
+                                               │
+                                    Spawns bot container
+                                               │
+                                         ┌─────▼─────┐
+                                         │  vexa-bot  │
+                                         │  (record)  │
+                                         └─────┬─────┘
+                                               │
+                                        Upload recording
+                                               │
+                                         ┌─────▼─────┐
+                                         │   MinIO    │
+                                         │  (S3/local)│
+                                         └───────────┘
+```
+
+No WhisperLive or transcription-service containers are started.

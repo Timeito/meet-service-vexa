@@ -36,7 +36,8 @@
             "pages": [
               "vexa-lite-deployment",
               "deployment",
-              "recording-storage"
+              "recording-storage",
+              "recording-only-mode"
             ]
           },
           {
