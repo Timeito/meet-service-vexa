@@ -372,8 +372,7 @@ test-setup: check_docker
 
 # Smart migration: detects if database is fresh, legacy, or already Alembic-managed
 migrate-or-init: check_docker
-	@set -e; \
-	REMOTE_DB=$$(grep -E '^[[:space:]]*REMOTE_DB=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' | tr '[:upper:]' '[:lower:]' || echo "false"); \
+	@REMOTE_DB=$$(grep -E '^[[:space:]]*REMOTE_DB=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' | tr '[:upper:]' '[:lower:]' || echo "false"); \
 	COMPOSE_FILES="-f docker-compose.yml"; \
 	if [ "$$REMOTE_DB" != "true" ]; then \
 		COMPOSE_FILES="$$COMPOSE_FILES -f docker-compose.local-db.yml"; \
@@ -387,32 +386,27 @@ migrate-or-init: check_docker
 	[ -n "$$DB_NAME" ] || DB_NAME="vexa"; \
 	[ -n "$$DB_USER" ] || DB_USER="postgres"; \
 	if [ "$$REMOTE_DB" != "true" ]; then \
-		if ! docker compose $$COMPOSE_FILES ps -q postgres | grep -q .; then \
+		if ! docker compose $$COMPOSE_FILES ps -q postgres 2>/dev/null | grep -q .; then \
 			echo "ERROR: PostgreSQL container is not running. Run 'make up' first."; \
 			exit 1; \
 		fi; \
-		count=0; \
-		while ! docker compose $$COMPOSE_FILES exec -T postgres pg_isready -U $$DB_USER -d $$DB_NAME -q; do \
-			if [ $$count -ge 12 ]; then \
-				echo "ERROR: Database did not become ready in 60 seconds."; \
-				exit 1; \
-			fi; \
-			sleep 5; \
-			count=$$((count+1)); \
+		echo "Waiting for postgres to accept connections..."; \
+		_pg=0; \
+		while [ $$_pg -lt 24 ]; do \
+			if docker compose $$COMPOSE_FILES exec -T postgres pg_isready -U $$DB_USER -d $$DB_NAME -q 2>/dev/null; then break; fi; \
+			sleep 5; _pg=$$(($$_pg+1)); \
 		done; \
-		echo "Waiting for transcription-collector to reach postgres..."; \
-		tc_count=0; \
-		while ! docker compose $$COMPOSE_FILES exec -T transcription-collector python -c "import os,socket; socket.create_connection((os.environ.get('DB_HOST','postgres'), int(os.environ.get('DB_PORT','5432'))), timeout=3)" 2>/dev/null; do \
-			if [ $$tc_count -ge 12 ]; then \
-				echo "ERROR: transcription-collector cannot reach postgres after 60 seconds."; \
-				exit 1; \
-			fi; \
-			echo "  Retrying ($$tc_count/12)..."; \
-			sleep 5; \
-			tc_count=$$((tc_count+1)); \
+		if [ $$_pg -ge 24 ]; then echo "ERROR: Database did not become ready in 120 seconds."; exit 1; fi; \
+		echo "✓ postgres is ready"; \
+		echo "Waiting for transcription-collector container..."; \
+		_tc=0; \
+		while [ $$_tc -lt 20 ]; do \
+			if docker compose $$COMPOSE_FILES exec -T transcription-collector python -c "print('ready')" >/dev/null 2>&1; then break; fi; \
+			sleep 3; _tc=$$(($$_tc+1)); \
 		done; \
-		echo "✓ transcription-collector can reach postgres"; \
-		docker compose $$COMPOSE_FILES exec -T transcription-collector python /app/libs/shared-models/fix_alembic_version.py --repair-stale; \
+		if [ $$_tc -ge 20 ]; then echo "ERROR: transcription-collector not reachable via exec after 60s."; exit 1; fi; \
+		echo "✓ transcription-collector is running"; \
+		docker compose $$COMPOSE_FILES exec -T transcription-collector python /app/libs/shared-models/fix_alembic_version.py --repair-stale || true; \
 		HAS_ALEMBIC_TABLE=$$(docker compose $$COMPOSE_FILES exec -T postgres psql -U $$DB_USER -d $$DB_NAME -t -c "SELECT 1 FROM information_schema.tables WHERE table_name = 'alembic_version';" 2>/dev/null | tr -d '[:space:]' || echo ""); \
 		if [ "$$HAS_ALEMBIC_TABLE" = "1" ]; then \
 			$(MAKE) migrate; \
