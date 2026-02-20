@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from typing import Optional
 
 from alembic.config import Config
@@ -116,6 +117,23 @@ def main() -> int:
     head = get_script_head_revision(args.alembic_ini)
     db_url = get_database_url_sync()
     engine = create_engine(db_url)
+
+    # Retry connection up to 5 times (handles Docker DNS propagation delay)
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            with engine.connect() as test_conn:
+                test_conn.execute(text("SELECT 1"))
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 3 * (attempt + 1)
+                print(f"DB connection attempt {attempt + 1}/{max_retries} failed: {e}")
+                print(f"Retrying in {wait}s...")
+                time.sleep(wait)
+                engine.dispose()
+            else:
+                raise
 
     with engine.begin() as conn:
         exists = alembic_version_exists(conn)

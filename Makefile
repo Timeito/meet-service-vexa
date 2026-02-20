@@ -398,6 +398,18 @@ migrate-or-init: check_docker
 			sleep 5; \
 			count=$$((count+1)); \
 		done; \
+		echo "Waiting for transcription-collector to reach postgres..."; \
+		tc_count=0; \
+		while ! docker compose $$COMPOSE_FILES exec -T transcription-collector python -c "import socket; socket.create_connection(('$$DB_HOST', int('$$DB_PORT')), timeout=3)" 2>/dev/null; do \
+			if [ $$tc_count -ge 12 ]; then \
+				echo "ERROR: transcription-collector cannot reach $$DB_HOST:$$DB_PORT after 60 seconds."; \
+				exit 1; \
+			fi; \
+			echo "  Retrying ($$tc_count/12)..."; \
+			sleep 5; \
+			tc_count=$$((tc_count+1)); \
+		done; \
+		echo "✓ transcription-collector can reach postgres"; \
 		docker compose $$COMPOSE_FILES exec -T transcription-collector python /app/libs/shared-models/fix_alembic_version.py --repair-stale; \
 		HAS_ALEMBIC_TABLE=$$(docker compose $$COMPOSE_FILES exec -T postgres psql -U $$DB_USER -d $$DB_NAME -t -c "SELECT 1 FROM information_schema.tables WHERE table_name = 'alembic_version';" 2>/dev/null | tr -d '[:space:]' || echo ""); \
 		if [ "$$HAS_ALEMBIC_TABLE" = "1" ]; then \
