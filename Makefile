@@ -382,6 +382,8 @@ migrate-or-init: check_docker
 	DB_PORT=$$(grep -E '^[[:space:]]*DB_PORT=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' || echo "5432"); \
 	DB_NAME=$$(grep -E '^[[:space:]]*DB_NAME=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' || echo "vexa"); \
 	DB_USER=$$(grep -E '^[[:space:]]*DB_USER=' .env 2>/dev/null | cut -d= -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//' || echo "postgres"); \
+	[ -n "$$DB_HOST" ] || DB_HOST="postgres"; \
+	[ -n "$$DB_PORT" ] || DB_PORT="5432"; \
 	[ -n "$$DB_NAME" ] || DB_NAME="vexa"; \
 	[ -n "$$DB_USER" ] || DB_USER="postgres"; \
 	if [ "$$REMOTE_DB" != "true" ]; then \
@@ -400,9 +402,9 @@ migrate-or-init: check_docker
 		done; \
 		echo "Waiting for transcription-collector to reach postgres..."; \
 		tc_count=0; \
-		while ! docker compose $$COMPOSE_FILES exec -T transcription-collector python -c "import socket; socket.create_connection(('$$DB_HOST', int('$$DB_PORT')), timeout=3)" 2>/dev/null; do \
+		while ! docker compose $$COMPOSE_FILES exec -T transcription-collector python -c "import os,socket; socket.create_connection((os.environ.get('DB_HOST','postgres'), int(os.environ.get('DB_PORT','5432'))), timeout=3)" 2>/dev/null; do \
 			if [ $$tc_count -ge 12 ]; then \
-				echo "ERROR: transcription-collector cannot reach $$DB_HOST:$$DB_PORT after 60 seconds."; \
+				echo "ERROR: transcription-collector cannot reach postgres after 60 seconds."; \
 				exit 1; \
 			fi; \
 			echo "  Retrying ($$tc_count/12)..."; \
